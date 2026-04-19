@@ -1,56 +1,62 @@
 # Tiny Tapeout project information
 project:
-  title:        ""      # Project title
-  author:       ""      # Your name
-  discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  ""      # One line description of what your project does
-  language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
-  clock_hz:     0       # Clock frequency in Hz (or 0 if not applicable)
+  title:        "TinyCPU-8"
+  author:       "leoriczhao"
+  discord:      ""
+  description:  "8-bit custom RISC CPU; 16-bit fixed-width ISA; executes from external QSPI flash (Fast Read Quad I/O)"
+  language:     "Verilog"
+  clock_hz:     25000000
 
   # How many tiles your design occupies? A single tile is about 167x108 uM.
-  tiles: "1x1"          # Valid values: 1x1, 1x2, 2x2, 3x2, 4x2, 6x2 or 8x2
+  tiles: "1x1"
 
-  # Your top module name must start with "tt_um_". Make it unique by including your github username:
-  top_module:  "tt_um_example"
+  # Top module name.
+  top_module:  "tt_um_tinycpu8"
 
   # List your project's source files here.
   # Source files must be in ./src and you must list each source file separately, one per line.
   # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
   source_files:
-    - "project.v"
+    - "regfile.v"
+    - "alu.v"
+    - "decoder.v"
+    - "pc.v"
+    - "flags.v"
+    - "qspi_fetch.v"
+    - "tt_um_tinycpu8.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
-# This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
+# Pinout matches SPEC v1.1 §5.
 pinout:
-  # Inputs
-  ui[0]: ""
-  ui[1]: ""
-  ui[2]: ""
-  ui[3]: ""
-  ui[4]: ""
-  ui[5]: ""
-  ui[6]: ""
-  ui[7]: ""
+  # Dedicated inputs (ui_in): read by the IN instruction.
+  ui[0]: "IN[0]"
+  ui[1]: "IN[1]"
+  ui[2]: "IN[2]"
+  ui[3]: "IN[3]"
+  ui[4]: "IN[4]"
+  ui[5]: "IN[5]"
+  ui[6]: "IN[6]"
+  ui[7]: "IN[7]"
 
-  # Outputs
-  uo[0]: ""
-  uo[1]: ""
-  uo[2]: ""
-  uo[3]: ""
-  uo[4]: ""
-  uo[5]: ""
-  uo[6]: ""
-  uo[7]: ""
+  # Dedicated outputs (uo_out): OUT latch, overridden to PC[7:0] during BRK halt.
+  uo[0]: "OUT[0] / PC[0] (BRK)"
+  uo[1]: "OUT[1] / PC[1] (BRK)"
+  uo[2]: "OUT[2] / PC[2] (BRK)"
+  uo[3]: "OUT[3] / PC[3] (BRK)"
+  uo[4]: "OUT[4] / PC[4] (BRK)"
+  uo[5]: "OUT[5] / PC[5] (BRK)"
+  uo[6]: "OUT[6] / PC[6] (BRK)"
+  uo[7]: "OUT[7] / PC[7] (BRK)"
 
-  # Bidirectional pins
-  uio[0]: ""
-  uio[1]: ""
-  uio[2]: ""
-  uio[3]: ""
-  uio[4]: ""
-  uio[5]: ""
-  uio[6]: ""
-  uio[7]: ""
+  # Bidirectional pins (uio): QSPI flash + status.
+  uio[0]: "QSPI CS_n (out)"
+  uio[1]: "QSPI SCK (out)"
+  uio[2]: "QSPI D0 (bidir)"
+  uio[3]: "QSPI D1 (bidir)"
+  uio[4]: "QSPI D2 (bidir)"
+  uio[5]: "QSPI D3 (bidir)"
+  uio[6]: "BRK LED (out, sticky)"
+  uio[7]: "Heartbeat (out, toggles each fetch)"
 
 # Do not change!
 yaml_version: 6
