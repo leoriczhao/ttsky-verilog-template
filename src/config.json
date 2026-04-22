@@ -11,13 +11,12 @@
 
   "//": "Here are some of the variables you may want to change:",
 
-  "//": "PL_TARGET_DENSITY_PCT - You can increase this if Global Placement fails with error GPL-0302.",
-  "//": "Users have reported that values up to 80 worked well for them.",
-  "//": "Jimu-8 v1.2 is ~63% tile utilisation pre-CTS; at PL=60 the post-CTS",
-  "//": "resizer (rsz_timing_postcts.tcl) fails DPL-0036 because there's no",
-  "//": "room to insert hold-fix buffers. Bumped to 70 to give tighter initial",
-  "//": "packing → more contiguous whitespace for CTS + resizer insertion.",
-  "PL_TARGET_DENSITY_PCT": 70,
+  "//": "PL_TARGET_DENSITY_PCT - after OpenLane scan-chain + tap-cell insertion",
+  "//": "Jimu-8 fills ~75% of the tile's 16 493 µm² core area (12 357 µm²",
+  "//": "movable + 574 fixed at PL=70). Targeting 75 aligns the global-placement",
+  "//": "density with actual cell area so the placer stops over-squeezing and",
+  "//": "the post-CTS resizer has somewhere to put hold-fix buffers.",
+  "PL_TARGET_DENSITY_PCT": 75,
 
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
@@ -25,9 +24,12 @@
   "//": "too many buffers post-CTS and detailed placement fails (DPL-0036).",
   "CLOCK_PERIOD": 40,
 
-  "//": "Hold slack margin - Increase them in case you are getting hold violations.",
-  "PL_RESIZER_HOLD_SLACK_MARGIN": 0.1,
-  "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.05,
+  "//": "Hold slack margin - zeroed so the resizer only inserts buffers for",
+  "//": "real hold violations, not safety. We lose hold-slack margin, gain",
+  "//": "~60 cells of placement headroom (prior runs wanted to insert 45-61",
+  "//": "buffers that didn't fit during rsz_timing_postcts).",
+  "PL_RESIZER_HOLD_SLACK_MARGIN": 0,
+  "GRT_RESIZER_HOLD_SLACK_MARGIN": 0,
 
   "//": "RUN_LINTER, LINTER_INCLUDE_PDK_MODELS - Disabling the linter is not recommended!",
   "RUN_LINTER": 1,
