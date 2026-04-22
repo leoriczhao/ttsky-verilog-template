@@ -151,6 +151,17 @@ module qspi_fetch (
         endcase
     end
 
+    // CMD-byte (1-bit) and nibble (4-bit) extractors used below. Using
+    // explicit bit-select / concat form instead of `>>` + `& mask` keeps
+    // RHS width == LHS width so Verilator doesn't warn WIDTHTRUNC.
+    wire [2:0] cmd_bit_idx = 3'd7 - ctr[2:0];    // 7..0 as ctr goes 0..7
+    wire       flash_cmd_bit = FLASH_CMD_BYTE[cmd_bit_idx];
+    wire       ps_cmd_bit    = ps_cmd_byte[cmd_bit_idx];
+    // MODE byte is 8'h00, always zero — kept as a wire so yosys prunes it.
+    wire [3:0] flash_mode_nib = ctr[0] ? FLASH_MODE_BYTE[3:0] : FLASH_MODE_BYTE[7:4];
+    // STORE-DATA nibble: ctr=0 → high nibble, ctr=1 → low nibble.
+    wire [3:0] ps_wdata_nib   = ctr[0] ? ps_wdata[3:0] : ps_wdata[7:4];
+
     reg [3:0] d_oe_c, d_out_c;
     always @(*) begin
         d_oe_c  = 4'b0000;
@@ -158,7 +169,7 @@ module qspi_fetch (
         case (state)
             S_CMD:  begin
                 d_oe_c  = 4'b0001;
-                d_out_c = {3'b0, (FLASH_CMD_BYTE  >> (4'd7 - ctr)) & 8'h01};
+                d_out_c = {3'b0, flash_cmd_bit};
             end
             S_ADDR: begin
                 d_oe_c  = 4'b1111;
@@ -166,11 +177,11 @@ module qspi_fetch (
             end
             S_MODE: begin
                 d_oe_c  = 4'b1111;
-                d_out_c = (FLASH_MODE_BYTE >> (4'd4 - {ctr, 2'b0})) & 8'hF;
+                d_out_c = flash_mode_nib;
             end
             S_PS_CMD: begin
                 d_oe_c  = 4'b0001;
-                d_out_c = {3'b0, (ps_cmd_byte >> (4'd7 - ctr)) & 8'h01};
+                d_out_c = {3'b0, ps_cmd_bit};
             end
             S_PS_ADDR: begin
                 d_oe_c  = 4'b1111;
@@ -180,7 +191,7 @@ module qspi_fetch (
                 // In STORE phase the master drives; in LOAD phase the slave does.
                 if (ps_is_store) begin
                     d_oe_c  = 4'b1111;
-                    d_out_c = (ps_wdata >> (4'd4 - {ctr, 2'b0})) & 8'hF;
+                    d_out_c = ps_wdata_nib;
                 end
             end
             default: ;
@@ -280,7 +291,10 @@ module qspi_fetch (
                                 state       <= halted ? S_IDLE : S_READ_H;
                                 ctr         <= 4'd0;
                             end else begin
-                                flash_rx_word[7:0] <= {flash_rx_word[3:0], qspi_d_in};
+                                // Only [3:0] is read below (at ctr==1 commit);
+                                // we used to do a full [7:0] shift, but [7:4]
+                                // was never consumed — drop it.
+                                flash_rx_word[3:0] <= qspi_d_in;
                                 ctr <= ctr + 4'd1;
                             end
                         end

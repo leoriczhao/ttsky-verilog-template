@@ -54,11 +54,12 @@ module tt_um_tinycpu8 (
     wire [2:0]  branch_cond;
     wire        io_out_we_dec;
     wire [7:0]  imm8;
-    wire [8:0]  imm9;
     wire [8:0]  branch_offset;
     wire [11:0] target12;
-    wire        is_load, is_store, is_call_w, is_ret_w;
-    wire        is_brk;
+    wire        is_load, is_store, is_call_w;
+    // imm9, is_ret (full 9-bit imm and ret flag) / is_brk are exposed by
+    // the decoder for debugging but not consumed here — leave the ports
+    // dangling rather than carrying a dead wire.
 
     wire [7:0]  rs1_data, rs2_data;
     wire [7:0]  wb_data;
@@ -133,14 +134,14 @@ module tt_um_tinycpu8 (
         .branch_cond   (branch_cond),
         .io_out_we     (io_out_we_dec),
         .imm8          (imm8),
-        .imm9          (imm9),
+        .imm9          (),
         .branch_offset (branch_offset),
         .target12      (target12),
         .is_load       (is_load),
         .is_store      (is_store),
         .is_call       (is_call_w),
-        .is_ret        (is_ret_w),
-        .is_brk        (is_brk),
+        .is_ret        (),
+        .is_brk        (),
         .is_nop        (),
         .is_reserved   ()
     );

@@ -38,8 +38,12 @@ module alu (
     wire [8:0]  add9     = {1'b0, a} + {1'b0, b};
     wire [8:0]  sub9     = {1'b0, a} - {1'b0, b};
     wire [2:0]  shamt    = b[2:0];
-    wire [15:0] shl_wide = {8'b0, a} << shamt;
-    wire [15:0] shr_wide = {a, 8'b0} >> shamt;
+    // 9-bit shifts — just wide enough to capture y (8 bits) + c_out (1 bit
+    // for the last bit shifted out). Previously declared 16-bit but 7 bits
+    // were never read and yosys pruned them; narrow the declaration so
+    // Verilator is happy.
+    wire [8:0]  shl_wide = {1'b0, a} << shamt;   // [7:0]=y, [8]=C
+    wire [8:0]  shr_wide = {a, 1'b0} >> shamt;   // [8:1]=y, [0]=C
 
     always @(*) begin
         c_out    = 1'b0;
@@ -64,8 +68,8 @@ module alu (
                 c_update = (shamt != 3'd0);
             end
             3'b110: begin                              // SHR (logical)
-                y        = shr_wide[15:8];
-                c_out    = shr_wide[7];
+                y        = shr_wide[8:1];
+                c_out    = shr_wide[0];
                 c_update = (shamt != 3'd0);
             end
             3'b111:   y = ~a;                          // NOT
