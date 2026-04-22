@@ -13,7 +13,11 @@
 
   "//": "PL_TARGET_DENSITY_PCT - You can increase this if Global Placement fails with error GPL-0302.",
   "//": "Users have reported that values up to 80 worked well for them.",
-  "PL_TARGET_DENSITY_PCT": 60,
+  "//": "Jimu-8 v1.2 is ~63% tile utilisation pre-CTS; at PL=60 the post-CTS",
+  "//": "resizer (rsz_timing_postcts.tcl) fails DPL-0036 because there's no",
+  "//": "room to insert hold-fix buffers. Bumped to 70 to give tighter initial",
+  "//": "packing → more contiguous whitespace for CTS + resizer insertion.",
+  "PL_TARGET_DENSITY_PCT": 70,
 
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
