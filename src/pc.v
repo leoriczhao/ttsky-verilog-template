@@ -1,4 +1,4 @@
-// pc.v — TinyCPU-8 program counter + branch/jump/call/ret resolver
+// pc.v — Jimu-8 program counter + branch/jump/call/ret resolver
 //         (SPEC v1.1 §2.2, §3.4–§3.6, §3.8).
 //
 // 12-bit word-addressed PC. Advances only on EXECUTE cycles (`advance`==1).
@@ -8,8 +8,8 @@
 //     0 : sequential        pc ← pc + 1
 //     1 : branch (cond)     pc ← branch_taken ? pc+1+sext(offset) : pc+1
 //     2 : jmp               pc ← target12
-//     3 : call              pc ← target12   (regfile writes R6 from pc_plus_1[7:0])
-//     4 : ret               pc ← {4'b0000, ret_source[7:0]}   (SPEC §3.6)
+//     3 : call              pc ← target12   (regfile writes R5 hi nibble, R6 lo byte)
+//     4 : ret               pc ← ret_source[11:0]   (SPEC v1.2 §3.6: full 12 bits)
 //     5 : halt (BRK)        pc holds; `halted` becomes 1 permanently
 //
 // `redirect` is asserted the cycle PC moves non-sequentially — the fetch FSM
@@ -27,7 +27,7 @@ module pc (
     input  wire [2:0]  branch_cond,
     input  wire [8:0]  branch_offset,  // signed
     input  wire [11:0] target12,
-    input  wire [7:0]  ret_source,     // R6 value on RET
+    input  wire [11:0] ret_source,     // v1.2: {R5[3:0], R6[7:0]} full 12-bit
 
     input  wire        z_flag,
     input  wire        c_flag,
@@ -78,7 +78,7 @@ module pc (
                 nonseq  = 1'b1;
             end
             3'd4: begin
-                next_pc = {4'b0000, ret_source};
+                next_pc = ret_source;            // v1.2: full 12-bit
                 nonseq  = 1'b1;
             end
             3'd5: begin

@@ -1,4 +1,4 @@
-// decoder.v — TinyCPU-8 instruction decoder (SPEC v1.1 §3).
+// decoder.v — Jimu-8 instruction decoder (SPEC v1.1 §3).
 //
 // Pure combinational. Consumes the 16-bit IR; emits control signals plus the
 // raw immediates/target for downstream consumers (ALU, PC, regfile, IO latch).
@@ -66,6 +66,12 @@ module decoder (
     output wire [8:0]  branch_offset, // ir[8:0]   — B-type signed
     output wire [11:0] target12,      // ir[11:0]  — J-type
 
+    // Memory-op flags (v1.2)
+    output wire        is_load,       // opcode 1001 — PSRAM byte load
+    output wire        is_store,      // opcode 1010 — PSRAM byte store
+    output wire        is_call,       // exposed for CALL pending-R5 logic
+    output wire        is_ret,        // exposed for 2-reg RET reconstruction
+
     // Flags/debug
     output wire        is_brk,
     output wire        is_nop,
@@ -82,22 +88,30 @@ module decoder (
     wire [2:0] f_bcond   = ir[11:9];
 
     // ── Opcode classes ───────────────────────────────────────────────────
-    wire is_rtype = (opcode == 4'h0);
-    wire is_addi  = (opcode == 4'h1);
-    wire is_andi  = (opcode == 4'h2);
-    wire is_itype = is_addi | is_andi;
-    wire is_br    = (opcode == 4'h3);
-    wire is_jmp   = (opcode == 4'h4);
-    wire is_call  = (opcode == 4'h5);
-    wire is_ret   = (opcode == 4'h6);
-    wire is_io    = (opcode == 4'h7);
-    wire is_movi  = (opcode == 4'h8);
-    wire is_brkop = (opcode == 4'hE);
-    wire is_nopop = (opcode == 4'hF);
-    // 4'h9..4'hD reserved
-    wire is_rsvd_op = (opcode == 4'h9) | (opcode == 4'hA)
-                    | (opcode == 4'hB) | (opcode == 4'hC)
-                    | (opcode == 4'hD);
+    wire is_rtype  = (opcode == 4'h0);
+    wire is_addi   = (opcode == 4'h1);
+    wire is_andi   = (opcode == 4'h2);
+    wire is_itype  = is_addi | is_andi;
+    wire is_br     = (opcode == 4'h3);
+    wire is_jmp    = (opcode == 4'h4);
+    wire is_call_w = (opcode == 4'h5);
+    wire is_ret_w  = (opcode == 4'h6);
+    wire is_io     = (opcode == 4'h7);
+    wire is_movi   = (opcode == 4'h8);
+    wire is_load_w  = (opcode == 4'h9);    // v1.2: LOAD
+    wire is_store_w = (opcode == 4'hA);    // v1.2: STORE
+    wire is_mem    = is_load_w | is_store_w;
+    wire is_brkop  = (opcode == 4'hE);
+    wire is_nopop  = (opcode == 4'hF);
+    // 4'hB..4'hD remain reserved
+    wire is_rsvd_op = (opcode == 4'hB) | (opcode == 4'hC) | (opcode == 4'hD);
+
+    // Expose these classes for the top-level arbiter (CALL pending-R5,
+    // LOAD/STORE stall + deferred LOAD writeback).
+    assign is_load  = is_load_w;
+    assign is_store = is_store_w;
+    assign is_call  = is_call_w;
+    assign is_ret   = is_ret_w;
 
     // ── IO subop classification ──────────────────────────────────────────
     wire io_is_in     = is_io & (f_iosub == 3'b000);
@@ -106,18 +120,33 @@ module decoder (
     // 3'b011..111 all NOP (UIO_OUT, UIO_DIR, reserved)
 
     // ── Register addresses ───────────────────────────────────────────────
+    //
+    // v1.2 changes:
+    //   RET reads both R6 (low 8 bits) and R5 (high 4 bits of PC+1).
+    //   LOAD/STORE read Rhi and Rlo (ir[8:6], ir[5:3]) for the 16-bit byte
+    //   address; STORE additionally needs Rs (= ir[11:9]) for the data
+    //   byte, which the top-level FSM reads by re-driving rs1_addr during
+    //   the PSRAM transaction (out-of-EXECUTE; not the decoder's concern).
+    //
     assign rs1_addr = is_rtype ? f_rs1
                     : is_itype ? f_rd                     // 2-op: Rs1 = Rd
-                    : is_io    ? f_rd                     // IO: reg field at [11:9]
-                    : is_ret   ? 3'd6                     // RET reads R6
+                    : is_io    ? f_rd
+                    : is_ret   ? 3'd6                     // RET rs1 = R6 (lo)
+                    : is_mem   ? f_rs1                    // LOAD/STORE: Rhi
                     : 3'd0;
-    assign rs2_addr = is_rtype ? f_rs2 : 3'd0;
-    assign rd_addr  = is_call                        ? 3'd6    // CALL link to R6
+    assign rs2_addr = is_rtype ? f_rs2
+                    : is_ret   ? 3'd5                     // RET rs2 = R5 (hi)
+                    : is_mem   ? f_rs2                    // LOAD/STORE: Rlo
+                    : 3'd0;
+    assign rd_addr  = is_call                        ? 3'd6    // CALL link lo
                     : (is_rtype | is_itype | is_movi) ? f_rd
                     : (io_is_in | io_is_uio_in)       ? f_rd
+                    : is_load_w                        ? f_rd   // LOAD dest
                     : 3'd0;
 
     // Regfile write enable. (R7 writes are discarded inside regfile.)
+    // NOTE: LOAD's regfile write is DEFERRED to when PSRAM data arrives —
+    // handled by the top-level arbiter, not here. STORE never writes regs.
     assign reg_we = is_rtype | is_itype | is_movi | is_call
                   | io_is_in | io_is_uio_in;
 

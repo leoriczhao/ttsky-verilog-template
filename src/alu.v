@@ -1,4 +1,4 @@
-// alu.v — TinyCPU-8 arithmetic / logic unit (SPEC v1.1 §3.3).
+// alu.v — Jimu-8 arithmetic / logic unit (SPEC v1.1 §3.3).
 //
 // Inputs:  a, b (8-bit operands)     funct[2:0] selects operation.
 // Outputs: y (8-bit result)

@@ -1,144 +1,143 @@
 # SPDX-FileCopyrightText: © 2026 leoriczhao
 # SPDX-License-Identifier: Apache-2.0
 #
-# Integration test for tt_um_tinycpu8.
+# Jimu-8 v1.2 integration tests for TinyTapeout CI.
 #
-# Assembles (statically) the classic 1+2+...+10 = 55 program, loads it into a
-# simulated QSPI flash model, runs the CPU until BRK fires, and verifies the
-# sum was emitted on uo_out.
+# Runs three pre-assembled programs against the dual-chip QSPI Pmod model
+# (flash + PSRAM-A), exercising:
+#
+#   1. test_add_loop         — 1+2+…+10 = 55 via ADD/ADDI/CMP/BNZ.
+#   2. test_ram_basic        — STORE 0xAB to PSRAM[0x0020]; LOAD back; OUT.
+#   3. test_call_high_addr   — CALL from PC 0x100 → subroutine at 0x001;
+#                              verifies the v1.2 12-bit CALL/RET link
+#                              (R5 high nibble + R6 low byte).
+#
+# Programs are inlined as bytes so this file has no dependency on the
+# assembler (`tools/tasm.py`) at CI time.
 
 import os
 import sys
 
 import cocotb
-from cocotb.clock import Clock
-from cocotb.triggers import Edge, RisingEdge
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from qspi_flash_model import QSPIFlashModel   # noqa: E402
+from qspi_flash_model import QSPIPmodModel   # noqa: E402
+from tt_harness import init_and_reset, wait_for_halt   # noqa: E402
 
 
-# Pre-assembled program (from tools/tasm.py):
-#     MOVI R0, 0       0x8000
-#     MOVI R1, 1       0x8201
-#     MOVI R2, 11      0x840B
-# loop:
-#     ADD  R0, R0, R1  0x0008
-#     ADDI R1, 1       0x1201
-#     CMP  R1, R2      0x0E51
-#     BNZ  loop        0x33FC
-#     OUT  R0          0x7040
-#     BRK              0xE000
+# ───────────────────────── programs (pre-assembled) ────────────────────────
+
+# add_program.s — sum 1..10 = 55, OUT R0, BRK.
 ADD_PROGRAM = bytes([
-    0x80, 0x00,
-    0x82, 0x01,
-    0x84, 0x0B,
-    0x00, 0x08,
-    0x12, 0x01,
-    0x0E, 0x51,
-    0x33, 0xFC,
-    0x70, 0x40,
-    0xE0, 0x00,
+    0x80, 0x00,   # MOVI R0, 0        ; sum = 0
+    0x82, 0x01,   # MOVI R1, 1        ; i = 1
+    0x84, 0x0B,   # MOVI R2, 11       ; limit
+    0x00, 0x08,   # ADD  R0, R0, R1
+    0x12, 0x01,   # ADDI R1, 1
+    0x0E, 0x51,   # CMP  R1, R2       ; SUB R7, R1, R2  → sets Z when i==11
+    0x33, 0xFC,   # BNZ  loop (-4)
+    0x70, 0x40,   # OUT  R0
+    0xE0, 0x00,   # BRK
 ])
 
+# ram_basic.s — STORE 0xAB to PSRAM[0x0020], LOAD back, OUT, BRK.
+RAM_BASIC = bytes([
+    0x80, 0xAB,   # MOVI R0, 0xAB     ; data
+    0x82, 0x00,   # MOVI R1, 0        ; Rhi
+    0x84, 0x20,   # MOVI R2, 0x20     ; Rlo
+    0xA0, 0x50,   # STORE R0, R1, R2  ; mem[0x0020] <- 0xAB
+    0x80, 0x00,   # MOVI R0, 0        ; clear so the LOAD is observable
+    0x90, 0x50,   # LOAD  R0, R1, R2  ; R0 <- mem[0x0020]
+    0x70, 0x40,   # OUT  R0           ; expect 0xAB on uo_out
+    0xE0, 0x00,   # BRK
+])
 
-# ─── QSPI flash driver (watches DUT's CS/SCK, feeds back d_in nibbles) ─────
-
-_flash_ref = {'f': None}
-_pending   = {'p': None}
-
-
-def _uio_out(dut):
-    try:
-        return int(dut.uio_out.value)
-    except ValueError:
-        return 0xFF
-
-
-async def _cs_tracker(dut):
-    prev = None
-    while True:
-        await Edge(dut.uio_out)
-        cs = _uio_out(dut) & 1
-        if cs != prev:
-            f = _flash_ref['f']
-            if f is not None:
-                f.set_cs(cs)
-            prev = cs
+# call_high_addr.s — JMP main ; inc: ADDI R0,1 ; RET ; ... pad ... ;
+#                    main (at PC 0x100): MOVI R0,0; CALL inc×2; OUT R0; BRK.
+_chdr_head = bytes([
+    0x41, 0x00,   # JMP  main (target12 = 0x100)
+    0x10, 0x01,   # inc: ADDI R0, 1
+    0x60, 0x00,   # RET
+])
+_chdr_main = bytes([
+    0x80, 0x00,   # MOVI R0, 0
+    0x50, 0x01,   # CALL inc  (target12 = 0x001)
+    0x50, 0x01,   # CALL inc
+    0x70, 0x40,   # OUT  R0           ; expect 2
+    0xE0, 0x00,   # BRK
+])
+# main at instruction addr 0x100 = byte 0x200. Pad with 0xFF (NOP).
+CALL_HIGH_ADDR = (_chdr_head
+                  + b"\xFF" * (0x200 - len(_chdr_head))
+                  + _chdr_main)
 
 
-async def _sck_handler(dut):
-    prev = None
-    while True:
-        await Edge(dut.uio_out)
-        v = _uio_out(dut)
-        sck = (v >> 1) & 1
-        if sck == prev:
-            continue
-        prev = sck
-        f = _flash_ref['f']
-        if f is None or f.cs_n != 0:
-            continue
-        if sck == 1:
-            d_out = (v >> 2) & 0xF
-            nib = f.sck_tick(d_out)
-            if nib is not None:
-                _pending['p'] = nib
-        else:
-            if _pending['p'] is not None:
-                try:
-                    current = int(dut.uio_in.value)
-                except ValueError:
-                    current = 0
-                # Preserve bits [7:6] and [1:0]; patch [5:2] with the nibble.
-                new_val = (current & 0b11000011) | ((_pending['p'] & 0xF) << 2)
-                dut.uio_in.value = new_val
-                _pending['p'] = None
-
+# ─────────────────────────────── tests ─────────────────────────────────────
 
 @cocotb.test()
 async def test_add_loop(dut):
-    """1+2+...+10 should land on uo_out as 55 before BRK halts the CPU."""
-    dut._log.info("Start TinyCPU-8 integration test")
+    """1+2+…+10 = 55 emitted on uo_out before BRK."""
+    pmod = QSPIPmodModel(flash_image=ADD_PROGRAM)
+    await init_and_reset(dut, pmod)
 
-    # 25 MHz CPU clock per SPEC §6 (40 ns period).
-    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
-
-    # Load program into the flash model.
-    flash = QSPIFlashModel()
-    flash.load(0, ADD_PROGRAM)
-    _flash_ref['f'] = flash
-    _pending['p']   = None
-
-    cocotb.start_soon(_cs_tracker(dut))
-    cocotb.start_soon(_sck_handler(dut))
-
-    # Reset.
-    dut.ena.value   = 1
-    dut.ui_in.value = 0
-    dut.uio_in.value = 0
-    dut.rst_n.value = 0
-    for _ in range(10):
-        await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
-
-    # Spin until BRK fires (uio_out[6] high). Capture the last non-zero uo_out,
-    # which is the `OUT R0` result right before BRK overrides uo_out with PC[7:0].
-    last_output = 0
-    for _ in range(30000):
-        await RisingEdge(dut.clk)
-        if (_uio_out(dut) >> 6) & 1:
-            break
+    saw_target = False
+    def track(_d, _c):
+        nonlocal saw_target
         try:
-            v = int(dut.uo_out.value)
+            v = int(_d.uo_out.value)
         except ValueError:
-            v = 0
-        if v != 0:
-            last_output = v
-    else:
-        raise TimeoutError("CPU never reached BRK within 30k cycles")
+            return
+        if v == 55:
+            saw_target = True
 
-    dut._log.info(f"Observed OUT value: {last_output}")
-    assert last_output == 55, f"Expected sum 1..10 = 55, got {last_output}"
+    await wait_for_halt(dut, 10000, per_cycle=track)
+    assert saw_target, "add_loop: uo_out never latched 55"
+
+
+@cocotb.test()
+async def test_ram_basic(dut):
+    """STORE 0xAB to PSRAM[0x0020]; LOAD back; expect 0xAB on uo_out."""
+    pmod = QSPIPmodModel(flash_image=RAM_BASIC)
+    await init_and_reset(dut, pmod)
+
+    saw_target = False
+    def track(_d, _c):
+        nonlocal saw_target
+        try:
+            v = int(_d.uo_out.value)
+        except ValueError:
+            return
+        if v == 0xAB:
+            saw_target = True
+
+    await wait_for_halt(dut, 5000, per_cycle=track)
+
+    psram_val = pmod.psram.peek(0x20, 1)
+    assert psram_val == b"\xAB", (
+        f"STORE failed: PSRAM[0x0020]={psram_val.hex()} (expected ab)")
+    assert saw_target, "ram_basic: uo_out never latched 0xAB"
+
+
+@cocotb.test()
+async def test_call_high_addr(dut):
+    """CALL from PC 0x100 to subroutine at 0x001 (twice); expect R0 = 2.
+
+    Verifies the v1.2 12-bit CALL/RET link pair — a v1.1 8-bit-only link
+    would drop the 0x1 high nibble and loop forever.
+    """
+    pmod = QSPIPmodModel(flash_image=CALL_HIGH_ADDR)
+    await init_and_reset(dut, pmod)
+
+    saw_target = False
+    def track(_d, _c):
+        nonlocal saw_target
+        try:
+            v = int(_d.uo_out.value)
+        except ValueError:
+            return
+        if v == 2:
+            saw_target = True
+
+    await wait_for_halt(dut, 20000, per_cycle=track)
+    assert saw_target, "call_high_addr: uo_out never latched 2 (RET mis-lands)"

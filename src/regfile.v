@@ -1,4 +1,4 @@
-// regfile.v — TinyCPU-8 register file (SPEC v1.1 §2.2).
+// regfile.v — Jimu-8 register file (SPEC v1.1 §2.2).
 //
 // 7 general-purpose 8-bit registers R0..R6. R7 is hard-wired to 0x00:
 // reads return 0; writes are silently discarded.

@@ -1,4 +1,4 @@
-// flags.v — TinyCPU-8 Z / C flag register (SPEC v1.1 §2.2, §3.3).
+// flags.v — Jimu-8 Z / C flag register (SPEC v1.1 §2.2, §3.3).
 //
 // Two DFFs. Update rules (combined outside by decoder + ALU):
 //   Z <= flag_z_we  ? alu_z : Z                     (gated by `advance`)

@@ -1,9 +1,9 @@
 # Tiny Tapeout project information
 project:
-  title:        "TinyCPU-8"
+  title:        "Jimu-8"
   author:       "leoriczhao"
   discord:      ""
-  description:  "8-bit custom RISC CPU; 16-bit fixed-width ISA; executes from external QSPI flash (Fast Read Quad I/O)"
+  description:  "8-bit custom RISC CPU with 64 KB off-chip PSRAM; 16-bit fixed-width ISA; executes from external QSPI flash; byte-granular LOAD/STORE to PSRAM over the same bus"
   language:     "Verilog"
   clock_hz:     25000000
 
@@ -26,7 +26,7 @@ project:
     - "tt_um_tinycpu8.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
-# Pinout matches SPEC v1.1 §5.
+# Pinout matches Jimu-8 v1.2 (TinyTapeout QSPI Pmod silkscreen).
 pinout:
   # Dedicated inputs (ui_in): read by the IN instruction.
   ui[0]: "IN[0]"
@@ -38,7 +38,7 @@ pinout:
   ui[6]: "IN[6]"
   ui[7]: "IN[7]"
 
-  # Dedicated outputs (uo_out): OUT latch, overridden to PC[7:0] during BRK halt.
+  # Dedicated outputs (uo_out): OUT latch; overridden to PC[7:0] during BRK halt.
   uo[0]: "OUT[0] / PC[0] (BRK)"
   uo[1]: "OUT[1] / PC[1] (BRK)"
   uo[2]: "OUT[2] / PC[2] (BRK)"
@@ -48,15 +48,15 @@ pinout:
   uo[6]: "OUT[6] / PC[6] (BRK)"
   uo[7]: "OUT[7] / PC[7] (BRK)"
 
-  # Bidirectional pins (uio): QSPI flash + status.
-  uio[0]: "QSPI CS_n (out)"
-  uio[1]: "QSPI SCK (out)"
-  uio[2]: "QSPI D0 (bidir)"
-  uio[3]: "QSPI D1 (bidir)"
+  # Bidirectional pins (uio): dual-chip QSPI Pmod (flash + PSRAM-A).
+  uio[0]: "Flash CS_n (out)"
+  uio[1]: "QSPI D0 / MOSI (bidir)"
+  uio[2]: "QSPI D1 / MISO (bidir)"
+  uio[3]: "QSPI SCK (out)"
   uio[4]: "QSPI D2 (bidir)"
   uio[5]: "QSPI D3 (bidir)"
-  uio[6]: "BRK LED (out, sticky)"
-  uio[7]: "Heartbeat (out, toggles each fetch)"
+  uio[6]: "PSRAM-A CS_n (out)"
+  uio[7]: "PSRAM-B disable (out, hardwired 1)"
 
 # Do not change!
 yaml_version: 6
