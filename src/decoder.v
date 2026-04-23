@@ -60,22 +60,20 @@ module decoder (
     // IO side-effect latches
     output wire        io_out_we,     // uo_out_latch  <= rs1_data
 
-    // Immediates / targets (extracted; consumers pick what they need)
+    // Immediates / targets (consumers pick what they need)
     output wire [7:0]  imm8,          // ir[7:0]   — ADDI low / ANDI / MOVI
-    output wire [8:0]  imm9,          // ir[8:0]   — full 9-bit field (for ADDI sign view)
     output wire [8:0]  branch_offset, // ir[8:0]   — B-type signed
     output wire [11:0] target12,      // ir[11:0]  — J-type
 
-    // Memory-op flags (v1.2)
+    // Memory-op flags (v1.2) — only the ones the top actually consumes.
+    // `is_ret` / `is_brk` / `is_nop` / `is_reserved` used to be exposed too
+    // but nothing read them; the PC module handles RET/BRK via pc_op, and
+    // reserved-opcode NOP semantics need no explicit flag. Removed to kill
+    // Verilator UNUSEDSIGNAL / PINCONNECTEMPTY warnings. `imm9` was also
+    // dropped for the same reason (imm8 + branch_offset cover all needs).
     output wire        is_load,       // opcode 1001 — PSRAM byte load
     output wire        is_store,      // opcode 1010 — PSRAM byte store
-    output wire        is_call,       // exposed for CALL pending-R5 logic
-    output wire        is_ret,        // exposed for 2-reg RET reconstruction
-
-    // Flags/debug
-    output wire        is_brk,
-    output wire        is_nop,
-    output wire        is_reserved
+    output wire        is_call        // exposed for CALL pending-R5 logic
 );
 
     // ── Field extraction ─────────────────────────────────────────────────
@@ -102,16 +100,14 @@ module decoder (
     wire is_store_w = (opcode == 4'hA);    // v1.2: STORE
     wire is_mem    = is_load_w | is_store_w;
     wire is_brkop  = (opcode == 4'hE);
-    wire is_nopop  = (opcode == 4'hF);
-    // 4'hB..4'hD remain reserved
-    wire is_rsvd_op = (opcode == 4'hB) | (opcode == 4'hC) | (opcode == 4'hD);
+    // NOP (4'hF) and reserved (4'hB..4'hD) decode as "do nothing" by falling
+    // through every mux below — no dedicated flag is needed.
 
     // Expose these classes for the top-level arbiter (CALL pending-R5,
     // LOAD/STORE stall + deferred LOAD writeback).
     assign is_load  = is_load_w;
     assign is_store = is_store_w;
     assign is_call  = is_call_w;
-    assign is_ret   = is_ret_w;
 
     // ── IO subop classification ──────────────────────────────────────────
     wire io_is_in     = is_io & (f_iosub == 3'b000);
@@ -131,11 +127,11 @@ module decoder (
     assign rs1_addr = is_rtype ? f_rs1
                     : is_itype ? f_rd                     // 2-op: Rs1 = Rd
                     : is_io    ? f_rd
-                    : is_ret   ? 3'd6                     // RET rs1 = R6 (lo)
+                    : is_ret_w ? 3'd6                     // RET rs1 = R6 (lo)
                     : is_mem   ? f_rs1                    // LOAD/STORE: Rhi
                     : 3'd0;
     assign rs2_addr = is_rtype ? f_rs2
-                    : is_ret   ? 3'd5                     // RET rs2 = R5 (hi)
+                    : is_ret_w ? 3'd5                     // RET rs2 = R5 (hi)
                     : is_mem   ? f_rs2                    // LOAD/STORE: Rlo
                     : 3'd0;
     assign rd_addr  = is_call                        ? 3'd6    // CALL link lo
@@ -177,7 +173,7 @@ module decoder (
     assign pc_op = is_br     ? 3'd1
                  : is_jmp    ? 3'd2
                  : is_call   ? 3'd3
-                 : is_ret    ? 3'd4
+                 : is_ret_w  ? 3'd4
                  : is_brkop  ? 3'd5
                  :             3'd0;
     assign branch_cond = f_bcond;
@@ -187,14 +183,8 @@ module decoder (
 
     // ── Immediates & targets ─────────────────────────────────────────────
     assign imm8          = ir[7:0];
-    assign imm9           = ir[8:0];
-    assign branch_offset  = ir[8:0];
-    assign target12       = ir[11:0];
-
-    // ── Flags / debug ────────────────────────────────────────────────────
-    assign is_brk      = is_brkop;
-    assign is_nop      = is_nopop;
-    assign is_reserved = is_rsvd_op;
+    assign branch_offset = ir[8:0];
+    assign target12      = ir[11:0];
 
 endmodule
 

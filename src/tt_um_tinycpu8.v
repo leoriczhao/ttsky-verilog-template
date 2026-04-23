@@ -134,16 +134,11 @@ module tt_um_tinycpu8 (
         .branch_cond   (branch_cond),
         .io_out_we     (io_out_we_dec),
         .imm8          (imm8),
-        .imm9          (),
         .branch_offset (branch_offset),
         .target12      (target12),
         .is_load       (is_load),
         .is_store      (is_store),
-        .is_call       (is_call_w),
-        .is_ret        (),
-        .is_brk        (),
-        .is_nop        (),
-        .is_reserved   ()
+        .is_call       (is_call_w)
     );
 
     // ── Regfile read-port arbiter ────────────────────────────────────
