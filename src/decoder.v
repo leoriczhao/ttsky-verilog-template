@@ -69,8 +69,8 @@ module decoder (
     // `is_ret` / `is_brk` / `is_nop` / `is_reserved` used to be exposed too
     // but nothing read them; the PC module handles RET/BRK via pc_op, and
     // reserved-opcode NOP semantics need no explicit flag. Removed to kill
-    // Verilator UNUSEDSIGNAL / PINCONNECTEMPTY warnings. `imm9` was also
-    // dropped for the same reason (imm8 + branch_offset cover all needs).
+    // lint noise from the unused outputs. `imm9` was also dropped for the
+    // same reason (imm8 + branch_offset cover all needs).
     output wire        is_load,       // opcode 1001 — PSRAM byte load
     output wire        is_store,      // opcode 1010 — PSRAM byte store
     output wire        is_call        // exposed for CALL pending-R5 logic
