@@ -12,8 +12,8 @@
 //      CALL's R6 link.
 //
 // Also time-shares the regfile rs1 read port during a STORE: during the
-// EXECUTE cycle rs1=Rhi (for address), on the very next cycle we override
-// rs1 to ir[11:9]=Rs to latch the byte being stored into the FSM.
+// EXECUTE cycle rs1=Rhi (for address), then we hold rs1 at ir[11:9]=Rs so
+// the QSPI FSM can stream the store byte without an internal data copy.
 //
 // Pinout (SPEC §5, v1.2):
 //   uio[0] = flash_cs_n     uio[3] = qspi_sck
@@ -78,15 +78,15 @@ module tt_um_tinycpu8 (
 
     // Memory-op interface to qspi_fetch
     reg         mem_op_latched;       // set in cycle after LOAD/STORE EXECUTE
-    reg         mem_op_is_store;
+    reg         mem_store_active;
     reg [15:0]  mem_op_addr_lat;
     wire [7:0]  mem_rdata;
     wire        mem_op_done;
     wire        mem_op_start = mem_op_latched;
-    wire [7:0]  mem_wdata_now = rs1_data;   // during mem_op_latched, rs1 override gives Rs
+    wire [7:0]  mem_wdata_now = rs1_data;   // during STORE, rs1 override gives Rs
 
     // Writeback arbitration
-    wire        mem_load_complete = mem_op_done & ~mem_op_is_store;
+    wire        mem_load_complete = mem_op_done & is_load;
 
     // CALL pending R5 deferred write
     reg         pending_r5_we;
@@ -101,7 +101,7 @@ module tt_um_tinycpu8 (
         .halted       (pc_halted),
 
         .mem_op_start (mem_op_start),
-        .mem_is_store (mem_op_is_store),
+        .mem_is_store (is_store),
         .mem_addr     (mem_op_addr_lat),
         .mem_wdata    (mem_wdata_now),
         .mem_rdata    (mem_rdata),
@@ -142,11 +142,10 @@ module tt_um_tinycpu8 (
     );
 
     // ── Regfile read-port arbiter ────────────────────────────────────
-    // During the cycle AFTER a LOAD/STORE EXECUTE (mem_op_latched=1), we
-    // override rs1_addr to the Rd field of the current IR so rs1_data
-    // presents the Rs byte to be stored. decoder's rs1 is irrelevant that
-    // cycle because fetch_valid=0 (no EXECUTE commit).
-    wire [2:0] rs1_addr_final = mem_op_latched ? ir[11:9] : dec_rs1_addr;
+    // During a STORE transaction, hold rs1_addr at IR[11:9] so rs1_data
+    // presents the Rs byte until the QSPI data phase has completed.
+    // decoder's rs1 is irrelevant while fetch_valid=0.
+    wire [2:0] rs1_addr_final = mem_store_active ? ir[11:9] : dec_rs1_addr;
     wire [2:0] rs2_addr_final = dec_rs2_addr;
 
     // Regfile write-port arbiter (priority: LOAD-complete > CALL-R5 > normal).
@@ -246,18 +245,18 @@ module tt_um_tinycpu8 (
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             mem_op_latched  <= 1'b0;
-            mem_op_is_store <= 1'b0;
+            mem_store_active <= 1'b0;
             mem_op_addr_lat <= 16'h0;
         end else begin
             if (fetch_valid & (is_load | is_store)) begin
                 mem_op_latched  <= 1'b1;
-                mem_op_is_store <= is_store;
+                mem_store_active <= is_store;
                 mem_op_addr_lat <= {rs1_data, rs2_data};
             end else if (mem_op_latched) begin
                 mem_op_latched <= 1'b0;
-                // mem_op_is_store stays valid until mem_op_done so writeback
-                // arbiter can distinguish LOAD vs STORE retirement.
             end
+            if (mem_op_done)
+                mem_store_active <= 1'b0;
         end
     end
 

@@ -61,7 +61,7 @@ module qspi_fetch (
     input  wire        mem_op_start,    // 1-cycle pulse: start LOAD/STORE
     input  wire        mem_is_store,    // 1 = STORE, 0 = LOAD
     input  wire [15:0] mem_addr,        // {Rhi, Rlo} byte address
-    input  wire [7:0]  mem_wdata,       // STORE data (top latches Rs→this line)
+    input  wire [7:0]  mem_wdata,       // STORE data, stable through STORE txn
 
     output wire [7:0]  mem_rdata,       // LOAD result, valid with mem_op_done
     output reg         mem_op_done,     // 1-cycle pulse at memory-op completion
@@ -108,15 +108,13 @@ module qspi_fetch (
     reg [15:0] flash_rx_word;
 
     // PSRAM datapath state
-    reg [7:0]  ps_wdata;        // byte to write
     reg [7:0]  ps_rdata;        // byte read back; after S_PS_DATA finishes
                                 // this holds the full byte — used directly
                                 // as mem_rdata, saving a separate 8-DFF latch.
-    reg        ps_is_store;
 
-    // ps_cmd_byte is derived combinationally from ps_is_store (2 values only:
-    // 0xEB = Fast Quad Read, 0x38 = Quad Write). Saves 8 DFFs.
-    wire [7:0] ps_cmd_byte = ps_is_store ? PS_CMD_WRITE : PS_CMD_READ;
+    // mem_is_store is decoded from the held IR in top, so it stays stable for
+    // the full PSRAM transaction without a local copy.
+    wire [7:0] ps_cmd_byte = mem_is_store ? PS_CMD_WRITE : PS_CMD_READ;
 
     // ── Combinational outputs ────────────────────────────────────────
     wire flash_active = (state != S_IDLE) && (state[3] == 1'b0);
@@ -160,7 +158,7 @@ module qspi_fetch (
     // MODE byte is 8'h00, always zero — kept as a wire so yosys prunes it.
     wire [3:0] flash_mode_nib = ctr[0] ? FLASH_MODE_BYTE[3:0] : FLASH_MODE_BYTE[7:4];
     // STORE-DATA nibble: ctr=0 → high nibble, ctr=1 → low nibble.
-    wire [3:0] ps_wdata_nib   = ctr[0] ? ps_wdata[3:0] : ps_wdata[7:4];
+    wire [3:0] ps_wdata_nib   = ctr[0] ? mem_wdata[3:0] : mem_wdata[7:4];
 
     reg [3:0] d_oe_c, d_out_c;
     always @(*) begin
@@ -189,7 +187,7 @@ module qspi_fetch (
             end
             S_PS_DATA: begin
                 // In STORE phase the master drives; in LOAD phase the slave does.
-                if (ps_is_store) begin
+                if (mem_is_store) begin
                     d_oe_c  = 4'b1111;
                     d_out_c = ps_wdata_nib;
                 end
@@ -213,9 +211,7 @@ module qspi_fetch (
             sck_r          <= 1'b0;
             ctr            <= 4'd0;
             flash_rx_word  <= 16'h0;
-            ps_wdata       <= 8'h00;
             ps_rdata       <= 8'h00;
-            ps_is_store    <= 1'b0;
             ir_out         <= 16'hFFFF;
             fetch_valid    <= 1'b0;
             mem_op_done    <= 1'b0;
@@ -236,8 +232,6 @@ module qspi_fetch (
                 state       <= S_PS_CMD;
                 sck_r       <= 1'b0;
                 ctr         <= 4'd0;
-                ps_is_store <= mem_is_store;
-                ps_wdata    <= mem_wdata;
                 // Address (mem_addr) is NOT latched here — S_PS_ADDR shifts
                 // it combinationally from the input port. The top's
                 // mem_op_addr_lat is stable for the whole transaction.
@@ -306,7 +300,7 @@ module qspi_fetch (
                         end
                         S_PS_ADDR: begin
                             if (ctr == 4'd5) begin
-                                if (ps_is_store) begin
+                                if (mem_is_store) begin
                                     state <= S_PS_DATA;     // writes skip DUMMY
                                     ctr   <= 4'd0;
                                 end else begin
@@ -322,7 +316,7 @@ module qspi_fetch (
                             else              ctr <= ctr + 4'd1;
                         end
                         S_PS_DATA: begin
-                            if (!ps_is_store) begin
+                            if (!mem_is_store) begin
                                 // LOAD: shift in 4 bits per SPI cycle; after
                                 // ctr==1 ps_rdata holds the full byte and
                                 // is exported as mem_rdata (no extra latch).
