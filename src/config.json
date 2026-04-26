@@ -12,11 +12,12 @@
   "//": "Here are some of the variables you may want to change:",
 
   "//": "PL_TARGET_DENSITY_PCT - after OpenLane scan-chain + tap-cell insertion",
-  "//": "Jimu-8 fills ~75% of the tile's 16 493 µm² core area (12 357 µm²",
-  "//": "movable + 574 fixed at PL=70). Targeting 75 aligns the global-placement",
-  "//": "density with actual cell area so the placer stops over-squeezing and",
-  "//": "the post-CTS resizer has somewhere to put hold-fix buffers.",
-  "PL_TARGET_DENSITY_PCT": 75,
+  "//": "Jimu-8 v1.2 is near the 1-tile placement limit after scan-chain,",
+  "//": "tap-cell, and resizer insertion. GitHub GDS logs reported a minimum",
+  "//": "feasible global-placement density of ~0.89, so this experiment sets",
+  "//": "the target density just above that to avoid OpenROAD auto-adjusting",
+  "//": "from a too-low value mid-flow.",
+  "PL_TARGET_DENSITY_PCT": 90,
 
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
