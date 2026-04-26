@@ -42,9 +42,9 @@
 //   Neither the flash nor the PSRAM address is registered inside this
 //   module. S_ADDR shifts directly from the `pc_addr` input (stable across
 //   the CMD+ADDR window — PC only moves on fetch_valid / mem_op_done).
-//   S_PS_ADDR shifts directly from `mem_addr` (the top's mem_op_addr_lat,
-//   stable for the entire PSRAM transaction). Saves ~28 DFFs vs keeping
-//   `flash_addr_word` / `ps_addr_word` local copies.
+//   S_PS_ADDR shifts directly from `mem_addr`, held stable by the top-level
+//   regfile/address muxes for the PSRAM address window. Saves local address
+//   copies in the QSPI FSM.
 
 `default_nettype none
 
@@ -233,8 +233,7 @@ module qspi_fetch (
                 sck_r       <= 1'b0;
                 ctr         <= 4'd0;
                 // Address (mem_addr) is NOT latched here — S_PS_ADDR shifts
-                // it combinationally from the input port. The top's
-                // mem_op_addr_lat is stable for the whole transaction.
+                // it combinationally from the input port.
             end
 
             // Priority 3: run whatever FSM path is active.

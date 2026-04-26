@@ -11,9 +11,9 @@
 //   3. Normal EXECUTE writeback — R-type / I-type / MOVI / IN / UIO_IN /
 //      CALL's R6 link.
 //
-// Also time-shares the regfile rs1 read port during a STORE: during the
-// EXECUTE cycle rs1=Rhi (for address), then we hold rs1 at ir[11:9]=Rs so
-// the QSPI FSM can stream the store byte without an internal data copy.
+// Also time-shares the regfile read ports during memory operations:
+//   * LOAD keeps both address bytes on rs1/rs2; no address copy.
+//   * STORE copies only Rhi, then holds rs1 at ir[11:9]=Rs while rs2 keeps Rlo.
 //
 // Pinout (SPEC §5, v1.2):
 //   uio[0] = flash_cs_n     uio[3] = qspi_sck
@@ -79,11 +79,13 @@ module tt_um_tinycpu8 (
     // Memory-op interface to qspi_fetch
     reg         mem_op_latched;       // set in cycle after LOAD/STORE EXECUTE
     reg         mem_store_active;
-    reg [15:0]  mem_op_addr_lat;
+    reg [7:0]   mem_store_addr_hi;
     wire [7:0]  mem_rdata;
     wire        mem_op_done;
     wire        mem_op_start = mem_op_latched;
     wire [7:0]  mem_wdata_now = rs1_data;   // during STORE, rs1 override gives Rs
+    wire [15:0] mem_addr_now = mem_store_active ? {mem_store_addr_hi, rs2_data}
+                                                : {rs1_data, rs2_data};
 
     // Writeback arbitration
     wire        mem_load_complete = mem_op_done & is_load;
@@ -102,7 +104,7 @@ module tt_um_tinycpu8 (
 
         .mem_op_start (mem_op_start),
         .mem_is_store (is_store),
-        .mem_addr     (mem_op_addr_lat),
+        .mem_addr     (mem_addr_now),
         .mem_wdata    (mem_wdata_now),
         .mem_rdata    (mem_rdata),
         .mem_op_done  (mem_op_done),
@@ -246,12 +248,12 @@ module tt_um_tinycpu8 (
         if (!rst_n) begin
             mem_op_latched  <= 1'b0;
             mem_store_active <= 1'b0;
-            mem_op_addr_lat <= 16'h0;
+            mem_store_addr_hi <= 8'h00;
         end else begin
             if (fetch_valid & (is_load | is_store)) begin
                 mem_op_latched  <= 1'b1;
                 mem_store_active <= is_store;
-                mem_op_addr_lat <= {rs1_data, rs2_data};
+                mem_store_addr_hi <= rs1_data;
             end else if (mem_op_latched) begin
                 mem_op_latched <= 1'b0;
             end
