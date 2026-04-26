@@ -64,6 +64,13 @@
 
   "GRT_ALLOW_CONGESTION": 1,
 
+  "//": "Routing-capacity experiment: let signal nets use met5 while keeping",
+  "//": "clock routing on met4. The previous 90% density run passed postCTS",
+  "//": "but timed out in detailed routing with >1000 remaining violations.",
+  "RT_MAX_LAYER": "met5",
+  "RT_CLOCK_MAX_LAYER": "met4",
+  "DRT_MAX_LAYER": "met5",
+
   "FP_IO_HLENGTH": 2,
   "FP_IO_VLENGTH": 2,
 
