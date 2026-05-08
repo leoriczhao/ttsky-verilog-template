@@ -95,17 +95,16 @@ module qspi_fetch (
         // bit[3]=1 discriminates PSRAM states (S_PS_*) from flash states.
 
     localparam [7:0] FLASH_CMD_BYTE  = 8'hEB;
-    localparam [7:0] FLASH_MODE_BYTE = 8'h00;
     localparam [7:0] PS_CMD_READ     = 8'hEB;
     localparam [7:0] PS_CMD_WRITE    = 8'h38;
 
     reg [3:0]  state;
     reg        sck_r;
-    reg [3:0]  ctr;
+    reg [2:0]  ctr;
 
-    // Flash datapath: only the rx shift register needs storage. The 24-bit
-    // send address is shifted out combinationally from `pc_addr`.
-    reg [15:0] flash_rx_word;
+    // Flash datapath: the instruction register itself captures the four
+    // incoming nibbles. `fetch_valid` is raised only after the final nibble,
+    // so partially received words are never committed architecturally.
 
     // PSRAM datapath state
     reg [7:0]  ps_rdata;        // byte read back; after S_PS_DATA finishes
@@ -127,7 +126,7 @@ module qspi_fetch (
     //   ctr 0,1 → high zeros; ctr 2..5 → the 12 pc_addr bits + final 0.
     reg [3:0] flash_addr_nib;
     always @(*) begin
-        case (ctr[2:0])
+        case (ctr)
             3'd2:    flash_addr_nib = {3'b000, pc_addr[11]};
             3'd3:    flash_addr_nib =  pc_addr[10:7];
             3'd4:    flash_addr_nib =  pc_addr[6:3];
@@ -140,7 +139,7 @@ module qspi_fetch (
     //   ctr 0,1 → high zeros; ctr 2..5 → the 16 mem_addr bits.
     reg [3:0] ps_addr_nib;
     always @(*) begin
-        case (ctr[2:0])
+        case (ctr)
             3'd2:    ps_addr_nib = mem_addr[15:12];
             3'd3:    ps_addr_nib = mem_addr[11:8];
             3'd4:    ps_addr_nib = mem_addr[7:4];
@@ -152,11 +151,9 @@ module qspi_fetch (
     // CMD-byte (1-bit) and nibble (4-bit) extractors used below. Using
     // explicit bit-select / concat form instead of `>>` + `& mask` keeps
     // RHS width == LHS width so Verilator doesn't warn WIDTHTRUNC.
-    wire [2:0] cmd_bit_idx = 3'd7 - ctr[2:0];    // 7..0 as ctr goes 0..7
+    wire [2:0] cmd_bit_idx = 3'd7 - ctr;    // 7..0 as ctr goes 0..7
     wire       flash_cmd_bit = FLASH_CMD_BYTE[cmd_bit_idx];
     wire       ps_cmd_bit    = ps_cmd_byte[cmd_bit_idx];
-    // MODE byte is 8'h00, always zero — kept as a wire so yosys prunes it.
-    wire [3:0] flash_mode_nib = ctr[0] ? FLASH_MODE_BYTE[3:0] : FLASH_MODE_BYTE[7:4];
     // STORE-DATA nibble: ctr=0 → high nibble, ctr=1 → low nibble.
     wire [3:0] ps_wdata_nib   = ctr[0] ? mem_wdata[3:0] : mem_wdata[7:4];
 
@@ -175,7 +172,6 @@ module qspi_fetch (
             end
             S_MODE: begin
                 d_oe_c  = 4'b1111;
-                d_out_c = flash_mode_nib;
             end
             S_PS_CMD: begin
                 d_oe_c  = 4'b0001;
@@ -209,8 +205,7 @@ module qspi_fetch (
         if (!rst_n) begin
             state          <= S_IDLE;
             sck_r          <= 1'b0;
-            ctr            <= 4'd0;
-            flash_rx_word  <= 16'h0;
+            ctr            <= 3'd0;
             ps_rdata       <= 8'h00;
             ir_out         <= 16'hFFFF;
             fetch_valid    <= 1'b0;
@@ -223,7 +218,7 @@ module qspi_fetch (
             if (redirect || halted) begin
                 state <= S_IDLE;
                 sck_r <= 1'b0;
-                ctr   <= 4'd0;
+                ctr   <= 3'd0;
             end
 
             // Priority 2: mem_op_start → begin PSRAM transaction.
@@ -231,7 +226,7 @@ module qspi_fetch (
             else if (mem_op_start) begin
                 state       <= S_PS_CMD;
                 sck_r       <= 1'b0;
-                ctr         <= 4'd0;
+                ctr         <= 3'd0;
                 // Address (mem_addr) is NOT latched here — S_PS_ADDR shifts
                 // it combinationally from the input port.
             end
@@ -239,13 +234,11 @@ module qspi_fetch (
             // Priority 3: run whatever FSM path is active.
             else if (state == S_IDLE) begin
                 sck_r <= 1'b0;
-                if (!halted) begin
-                    state <= S_CMD;
-                    ctr   <= 4'd0;
-                    // flash address is NOT latched — S_ADDR shifts it
-                    // combinationally from `pc_addr` (stable through the
-                    // CMD+ADDR window).
-                end
+                state <= S_CMD;
+                ctr   <= 3'd0;
+                // flash address is NOT latched — S_ADDR shifts it
+                // combinationally from `pc_addr` (stable through the
+                // CMD+ADDR window).
             end
             else begin
                 // Any active state: toggle SCK each clk.
@@ -256,63 +249,64 @@ module qspi_fetch (
                     case (state)
                         // ── Flash path ──
                         S_CMD: begin
-                            if (ctr == 4'd7) begin state <= S_ADDR; ctr <= 4'd0; end
-                            else              ctr <= ctr + 4'd1;
+                            if (ctr == 3'd7) begin state <= S_ADDR; ctr <= 3'd0; end
+                            else              ctr <= ctr + 3'd1;
                         end
                         S_ADDR: begin
-                            if (ctr == 4'd5) begin state <= S_MODE;  ctr <= 4'd0; end
-                            else              ctr <= ctr + 4'd1;
+                            if (ctr == 3'd5) begin state <= S_MODE;  ctr <= 3'd0; end
+                            else              ctr <= ctr + 3'd1;
                         end
                         S_MODE: begin
-                            if (ctr == 4'd1) begin state <= S_DUMMY; ctr <= 4'd0; end
-                            else              ctr <= ctr + 4'd1;
+                            if (ctr == 3'd1) begin state <= S_DUMMY; ctr <= 3'd0; end
+                            else              ctr <= ctr + 3'd1;
                         end
                         S_DUMMY: begin
-                            if (ctr == 4'd3) begin state <= S_READ_H; ctr <= 4'd0; end
-                            else              ctr <= ctr + 4'd1;
+                            if (ctr == 3'd3) begin state <= S_READ_H; ctr <= 3'd0; end
+                            else              ctr <= ctr + 3'd1;
                         end
                         S_READ_H: begin
-                            flash_rx_word[15:8] <= {flash_rx_word[11:8], qspi_d_in};
-                            if (ctr == 4'd1) begin state <= S_READ_L; ctr <= 4'd0; end
-                            else              ctr <= ctr + 4'd1;
+                            if (ctr == 3'd0) begin
+                                ir_out[15:12] <= qspi_d_in;
+                                ctr <= 3'd1;
+                            end else begin
+                                ir_out[11:8] <= qspi_d_in;
+                                state <= S_READ_L;
+                                ctr <= 3'd0;
+                            end
                         end
                         S_READ_L: begin
-                            if (ctr == 4'd1) begin
-                                ir_out      <= {flash_rx_word[15:8],
-                                                flash_rx_word[3:0], qspi_d_in};
+                            if (ctr == 3'd1) begin
+                                ir_out[3:0] <= qspi_d_in;
                                 fetch_valid <= 1'b1;
-                                state       <= halted ? S_IDLE : S_READ_H;
-                                ctr         <= 4'd0;
+                                state       <= S_READ_H;
+                                ctr         <= 3'd0;
                             end else begin
-                                // Only [3:0] is read below (at ctr==1 commit);
-                                // we used to do a full [7:0] shift, but [7:4]
-                                // was never consumed — drop it.
-                                flash_rx_word[3:0] <= qspi_d_in;
-                                ctr <= ctr + 4'd1;
+                                ir_out[7:4] <= qspi_d_in;
+                                ctr <= 3'd1;
                             end
                         end
 
                         // ── PSRAM path ──
                         S_PS_CMD: begin
-                            if (ctr == 4'd7) begin state <= S_PS_ADDR; ctr <= 4'd0; end
-                            else              ctr <= ctr + 4'd1;
+                            if (ctr == 3'd7) begin state <= S_PS_ADDR; ctr <= 3'd0; end
+                            else              ctr <= ctr + 3'd1;
                         end
                         S_PS_ADDR: begin
-                            if (ctr == 4'd5) begin
+                            if (ctr == 3'd5) begin
                                 if (mem_is_store) begin
                                     state <= S_PS_DATA;     // writes skip DUMMY
-                                    ctr   <= 4'd0;
+                                    ctr   <= 3'd0;
                                 end else begin
                                     state <= S_PS_DUMMY;
-                                    ctr   <= 4'd0;
+                                    ctr   <= 3'd0;
                                 end
                             end else
-                                ctr <= ctr + 4'd1;
+                                ctr <= ctr + 3'd1;
                         end
                         S_PS_DUMMY: begin
                             // 6 dummy SPI cycles for Fast-Quad-Read
-                            if (ctr == 4'd5) begin state <= S_PS_DATA; ctr <= 4'd0; end
-                            else              ctr <= ctr + 4'd1;
+                            if (ctr == 3'd5) begin state <= S_PS_DATA; ctr <= 3'd0; end
+                            else              ctr <= ctr + 3'd1;
                         end
                         S_PS_DATA: begin
                             if (!mem_is_store) begin
@@ -321,16 +315,16 @@ module qspi_fetch (
                                 // is exported as mem_rdata (no extra latch).
                                 ps_rdata <= {ps_rdata[3:0], qspi_d_in};
                             end
-                            if (ctr == 4'd1) begin
+                            if (ctr == 3'd1) begin
                                 // Retire: pulse mem_op_done (top advances PC
                                 // on this same edge) and transition straight
                                 // to S_CMD. Next-cycle S_ADDR will shift the
                                 // post-advance pc_addr. No S_PS_DONE buffer.
-                                state       <= halted ? S_IDLE : S_CMD;
+                                state       <= S_CMD;
                                 mem_op_done <= 1'b1;
-                                ctr         <= 4'd0;
+                                ctr         <= 3'd0;
                             end else
-                                ctr <= ctr + 4'd1;
+                                ctr <= ctr + 3'd1;
                         end
 
                         default: ;

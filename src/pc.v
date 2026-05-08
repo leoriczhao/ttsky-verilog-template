@@ -39,47 +39,37 @@ module pc (
 );
 
     // ── Branch-condition evaluation (SPEC §3.5) ─────────────────────────
-    reg branch_taken;
-    always @(*) begin
-        case (branch_cond)
-            3'b000:  branch_taken = z_flag;        // BZ/BEQ
-            3'b001:  branch_taken = ~z_flag;       // BNZ/BNE
-            3'b010:  branch_taken = c_flag;        // BC
-            3'b011:  branch_taken = ~c_flag;       // BNC
-            3'b100:  branch_taken = 1'b1;          // BAL
-            default: branch_taken = 1'b0;          // reserved 101..111 → never
-        endcase
-    end
+    wire branch_flag  = branch_cond[1] ? c_flag : z_flag;
+    wire branch_taken = (branch_cond == 3'b100)
+                      | (~branch_cond[2] & (branch_flag ^ branch_cond[0]));
 
     // ── Next-PC computation ─────────────────────────────────────────────
     assign pc_plus_1 = pc_out + 12'd1;
     wire [11:0] sext_off  = {{3{branch_offset[8]}}, branch_offset};
     wire [11:0] br_target = pc_plus_1 + sext_off;
 
+    wire op_is_branch    = (pc_op == 3'd1);
+    wire op_is_jump_call = (pc_op[2:1] == 2'b01);
+    wire op_is_ret       = (pc_op == 3'd4);
+    wire nonseq          = (op_is_branch & branch_taken)
+                         | op_is_jump_call
+                         | op_is_ret;
+
     reg [11:0] next_pc;
-    reg        nonseq;                  // next_pc is non-sequential
     always @(*) begin
         next_pc = pc_plus_1;
-        nonseq  = 1'b0;
         case (pc_op)
             3'd0: next_pc = pc_plus_1;
             3'd1: begin
-                if (branch_taken) begin
+                if (branch_taken)
                     next_pc = br_target;
-                    nonseq  = 1'b1;
-                end
             end
-            3'd2: begin
-                next_pc = target12;
-                nonseq  = 1'b1;
-            end
+            3'd2,
             3'd3: begin
                 next_pc = target12;
-                nonseq  = 1'b1;
             end
             3'd4: begin
                 next_pc = ret_source;            // v1.2: full 12-bit
-                nonseq  = 1'b1;
             end
             3'd5: begin
                 next_pc = pc_out;            // hold
