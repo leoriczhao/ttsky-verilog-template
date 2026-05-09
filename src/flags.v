@@ -27,16 +27,13 @@ module flags (
     output reg  c_flag
 );
 
-    wire z_we = advance & flag_z_we;
-    wire c_we = advance & flag_c_we & alu_c_update;
-
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             z_flag <= 1'b0;
             c_flag <= 1'b0;
-        end else begin
-            if (z_we) z_flag <= alu_z;
-            if (c_we) c_flag <= alu_c;
+        end else if (advance) begin
+            if (flag_z_we) z_flag <= alu_z;
+            if (flag_c_we & alu_c_update) c_flag <= alu_c;
         end
     end
 

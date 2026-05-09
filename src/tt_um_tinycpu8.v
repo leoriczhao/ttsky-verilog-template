@@ -186,11 +186,10 @@ module tt_um_tinycpu8 (
 
     // ── Writeback data mux (normal EXECUTE path) ─────────────────────
     //   0 = ALU,  1 = imm8,  2 = ui_in,  3 = uio_in,  4 = pc+1[7:0] (CALL)
-    assign wb_data = (wb_sel == 3'd1) ? imm8
-                   : (wb_sel == 3'd2) ? ui_in
-                   : (wb_sel == 3'd3) ? uio_in
-                   : (wb_sel == 3'd4) ? pc_plus_1[7:0]
-                   :                    alu_y;
+    assign wb_data = wb_sel[2] ? pc_plus_1[7:0]
+                   : wb_sel[1] ? (wb_sel[0] ? uio_in : ui_in)
+                   : wb_sel[0] ? imm8
+                   :             alu_y;
 
     // ── PC ───────────────────────────────────────────────────────────
     // RET now reconstructs full 12-bit PC from R5 (high nibble) + R6 (low byte).
@@ -240,10 +239,9 @@ module tt_um_tinycpu8 (
     );
 
     // ── Memory-op latching ───────────────────────────────────────────
-    // When fetch_valid for a LOAD or STORE, latch the address and set
-    // mem_op_latched. The latched pulse is what triggers mem_op_start in
-    // qspi_fetch on the NEXT cycle. The NEXT cycle also presents Rs on
-    // rs1 so we can latch mem_wdata via the arbiter inside qspi_fetch.
+    // When fetch_valid for a LOAD or STORE, set the one-cycle delayed
+    // mem_op_latched pulse that triggers qspi_fetch on the NEXT cycle.
+    // STORE keeps Rs live on rs1_data while qspi_fetch streams the byte.
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             mem_op_latched  <= 1'b0;

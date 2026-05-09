@@ -14,10 +14,8 @@
 //   SHL / SHR with shamt=0 : C unchanged                   → c_update=0
 //   SHL / SHR with shamt!=0: C = last bit shifted out      → c_update=1
 //
-// SHL carry derivation:    shl_wide = {8'b0,a} << shamt;  carry = shl_wide[8]
-//   Shift-by-1 → a[7];  shift-by-2 → a[6]; … shift-by-7 → a[1].
-// SHR carry derivation:    shr_wide = {a,8'b0} >> shamt;  carry = shr_wide[7]
-//   Shift-by-1 → a[0];  shift-by-2 → a[1]; … shift-by-7 → a[6].
+// SHL carry derivation: shift-by-1 → a[7]; shift-by-2 → a[6]; … shift-by-7 → a[1].
+// SHR carry derivation: shift-by-1 → a[0]; shift-by-2 → a[1]; … shift-by-7 → a[6].
 //
 // Z is always recomputed as (y == 0). Whether Z is written to the flag register
 // is gated outside (e.g., MOVI doesn't update Z; decoder handles that).
@@ -35,41 +33,42 @@ module alu (
     output reg        c_update
 );
 
-    wire [8:0]  add9     = {1'b0, a} + {1'b0, b};
-    wire [8:0]  sub9     = {1'b0, a} - {1'b0, b};
     wire [2:0]  shamt    = b[2:0];
-    // 9-bit shifts — just wide enough to capture y (8 bits) + c_out (1 bit
-    // for the last bit shifted out). Declaration used to be 16-bit but 7
-    // of those bits were never read; narrowing here drops a stale lint
-    // warning without changing the synthesised result.
-    wire [8:0]  shl_wide = {1'b0, a} << shamt;   // [7:0]=y, [8]=C
-    wire [8:0]  shr_wide = {a, 1'b0} >> shamt;   // [8:1]=y, [0]=C
+    wire        addsub_sub = funct[0];
+    wire [7:0]  addsub_b   = b ^ {8{addsub_sub}};
+    wire [8:0]  addsub9    = {1'b0, a} + {1'b0, addsub_b}
+                           + {8'b0, addsub_sub};
+
+    wire        shift_left    = funct[0];
+    wire [7:0]  a_rev         = {a[0], a[1], a[2], a[3],
+                                 a[4], a[5], a[6], a[7]};
+    wire [7:0]  shift_in      = shift_left ? a_rev : a;
+    wire [7:0]  shift_right_y = shift_in >> shamt;
+    wire [7:0]  shift_y       = shift_left ? {shift_right_y[0], shift_right_y[1],
+                                              shift_right_y[2], shift_right_y[3],
+                                              shift_right_y[4], shift_right_y[5],
+                                              shift_right_y[6], shift_right_y[7]}
+                                           : shift_right_y;
+    wire        shift_c       = (shamt == 3'd0) ? 1'b0
+                                                : shift_in[shamt - 3'd1];
 
     always @(*) begin
         c_out    = 1'b0;
         c_update = 1'b0;
         case (funct)
-            3'b000: begin                              // ADD
-                y        = add9[7:0];
-                c_out    = add9[8];
-                c_update = 1'b1;
-            end
-            3'b001: begin                              // SUB (C=1 if no borrow)
-                y        = sub9[7:0];
-                c_out    = ~sub9[8];
+            3'b000,
+            3'b001: begin                              // ADD / SUB
+                y        = addsub9[7:0];
+                c_out    = addsub9[8];
                 c_update = 1'b1;
             end
             3'b010:   y = a & b;                       // AND
             3'b011:   y = a | b;                       // OR
             3'b100:   y = a ^ b;                       // XOR
-            3'b101: begin                              // SHL
-                y        = shl_wide[7:0];
-                c_out    = shl_wide[8];
-                c_update = (shamt != 3'd0);
-            end
-            3'b110: begin                              // SHR (logical)
-                y        = shr_wide[8:1];
-                c_out    = shr_wide[0];
+            3'b101,
+            3'b110: begin                              // SHL / SHR (logical)
+                y        = shift_y;
+                c_out    = shift_c;
                 c_update = (shamt != 3'd0);
             end
             3'b111:   y = ~a;                          // NOT
